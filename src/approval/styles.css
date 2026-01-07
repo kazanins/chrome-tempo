@@ -1,0 +1,124 @@
+:root {
+  color-scheme: light;
+  --ink: #0b0b0b;
+  --muted: #6b6b6b;
+  --accent: #0b0b0b;
+  --accent-soft: #f3f3f3;
+  --surface: #f7f7f7;
+  --surface-2: #ffffff;
+  --border: #e5e5e5;
+  --shadow: none;
+  font-family: "Söhne", "Neue Haas Grotesk Text", "Avenir Next", "Helvetica Neue", Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #ffffff;
+  color: var(--ink);
+  font-weight: 400;
+}
+
+.approval {
+  min-height: 100vh;
+  padding: 18px;
+}
+
+header {
+  margin-bottom: 16px;
+}
+
+header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+header p {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
+  box-shadow: var(--shadow);
+  margin-bottom: 12px;
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+  font-weight: 500;
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.detail:last-child {
+  border-bottom: none;
+}
+
+.detail span {
+  color: var(--muted);
+}
+
+.mono {
+  font-family: "SFMono-Regular", "Menlo", "Monaco", "Courier New", monospace;
+}
+
+.actions {
+  display: flex;
+  gap: 10px;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 10px 16px;
+  background: #0b0b0b;
+  color: #ffffff;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+button.ghost {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--ink);
+}
+
+.banner {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f4f4f4;
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+
+.banner.error {
+  background: #f7f7f7;
+  border-color: #d6d6d6;
+  color: #0b0b0b;
+}
+
+.banner.warning {
+  background: #f7f7f7;
+  border-color: #d6d6d6;
+  color: #0b0b0b;
+}

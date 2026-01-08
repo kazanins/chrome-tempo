@@ -1,7 +1,7 @@
-export const TEMPO_CHAIN_ID = 42429
-export const TEMPO_CHAIN_ID_HEX = '0xa5bd'
+export const TEMPO_CHAIN_ID = 42431
+export const TEMPO_CHAIN_ID_HEX = '0xa5bf'
 export const TEMPO_CHAIN_NAME = 'Tempo Testnet (Andantino)'
-export const TEMPO_RPC_URL = 'https://rpc.testnet.tempo.xyz'
+export const TEMPO_RPC_URL = 'https://rpc.moderato.tempo.xyz'
 export const TEMPO_EXPLORER_URL = 'https://explore.tempo.xyz'
 
 export const TEMPO_TX_TYPE = 0x76

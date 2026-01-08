@@ -20,10 +20,10 @@ describe('provider routing', () => {
     expect(posted.type).toBe('TEMPO_PROVIDER_REQUEST')
     const id = posted.payload.id as string
 
-    provider._handleResponse({ id, result: '0xa5bd' })
+    provider._handleResponse({ id, result: '0xa5bf' })
     const result = await promise
 
-    expect(result).toBe('0xa5bd')
+    expect(result).toBe('0xa5bf')
     spy.mockRestore()
   })
 })

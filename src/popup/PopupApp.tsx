@@ -26,6 +26,7 @@ type Screen =
   | 'send'
   | 'send_confirm'
   | 'settings'
+  | 'add'
 
 export function PopupApp() {
   const normalizeAddress = (value?: string) => (value ? value.toLowerCase() : '')
@@ -65,6 +66,7 @@ export function PopupApp() {
   const [autoLockMinutes, setAutoLockMinutes] = React.useState<number>(5)
   const [copied, setCopied] = React.useState<boolean>(false)
   const [privateKeyCopied, setPrivateKeyCopied] = React.useState<boolean>(false)
+  const [importReturnScreen, setImportReturnScreen] = React.useState<Screen>('welcome')
 
   React.useEffect(() => {
     refreshState()
@@ -322,7 +324,13 @@ export function PopupApp() {
     window.setTimeout(() => setCopied(false), 1200)
   }
 
-  async function handleAddWallet() {
+  function handleAddWallet() {
+    setError('')
+    setStatus(null)
+    setScreen('add')
+  }
+
+  async function handleAddWalletCreate() {
     setError('')
     try {
       await sendUiRequest<{ address: string }>('ADD_WALLET')
@@ -478,8 +486,38 @@ export function PopupApp() {
           <p>Create a Tempo-only wallet or import an existing key.</p>
           <div className="actions">
             <button onClick={handleCreateStart}>Create wallet</button>
-            <button className="ghost" onClick={() => setScreen('import')}>
+            <button
+              className="ghost"
+              onClick={() => {
+                setImportReturnScreen('welcome')
+                setScreen('import')
+              }}
+            >
               Import wallet
+            </button>
+          </div>
+        </section>
+      )}
+
+      {screen === 'add' && (
+        <section className="card">
+          <h2>Add wallet</h2>
+          <p>Choose how you want to add another wallet.</p>
+          <div className="actions">
+            <button onClick={handleAddWalletCreate}>Create new wallet</button>
+            <button
+              className="ghost"
+              onClick={() => {
+                setImportReturnScreen('add')
+                setScreen('import')
+              }}
+            >
+              Import private key
+            </button>
+          </div>
+          <div className="actions">
+            <button className="ghost" onClick={() => setScreen('home')}>
+              Cancel
             </button>
           </div>
         </section>
@@ -536,7 +574,7 @@ export function PopupApp() {
           </label>
           <div className="actions">
             <button onClick={handleImport}>Import</button>
-            <button className="ghost" onClick={() => setScreen('welcome')}>
+            <button className="ghost" onClick={() => setScreen(importReturnScreen)}>
               Cancel
             </button>
           </div>

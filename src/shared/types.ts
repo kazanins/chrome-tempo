@@ -14,8 +14,9 @@ export type ProviderResponse = {
 export type BackgroundRequest =
   | { type: 'PROVIDER_REQUEST'; payload: ProviderRequest }
   | { type: 'UI_REQUEST'; action: UIAction; payload?: unknown }
+  | { type: 'POPUP_CLOSED' }
   | { type: 'APPROVAL_GET'; requestId: string }
-  | { type: 'APPROVAL_RESPONSE'; requestId: string; approved: boolean; feeToken?: string }
+  | { type: 'APPROVAL_RESPONSE'; requestId: string; approved: boolean; account?: string; feeToken?: string }
 
 export type BackgroundResponse = {
   ok: boolean
@@ -25,6 +26,7 @@ export type BackgroundResponse = {
 
 export type UIAction =
   | 'GET_STATE'
+  | 'GET_PENDING_APPROVAL'
   | 'GET_PRIVATE_KEY'
   | 'ADD_WALLET'
   | 'SET_ACTIVE_ACCOUNT'
@@ -49,6 +51,7 @@ export type ApprovalRequest = {
   kind: ApprovalKind
   origin: string
   account: string
+  accounts?: string[]
   createdAt: number
   summary: string
   details: Record<string, string>

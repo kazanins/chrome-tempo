@@ -28,7 +28,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["injected_provider.js"],
+      "resources": ["injected_provider.js", "chunks/config.js"],
       "matches": ["<all_urls>"]
     }
   ]

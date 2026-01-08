@@ -59,15 +59,24 @@ let cachedAddress: string | null = null
 let cachedAccountIndex: number | null = null
 let vaultPassword: string | null = null
 let lastApprovalWindowId: number | null = null
+let lastUnlockWindowId: number | null = null
+let unlockPromptOpen = false
+let popupOpen = false
 
-const pendingApprovals = new Map<
-  string,
-  {
-    request: ApprovalRequest
-    resolve: (approved: boolean) => void
-    windowId?: number
-  }
->()
+type ApprovalDecision = {
+  approved: boolean
+  account?: string
+}
+
+type PendingApprovalEntry = {
+  request: ApprovalRequest
+  resolve: (decision: ApprovalDecision) => void
+  windowId?: number
+  surface: 'popup' | 'window'
+}
+
+const pendingApprovals = new Map<string, PendingApprovalEntry>()
+const pendingUnlocks: Array<(unlocked: boolean) => void> = []
 
 async function storageGet<T>(key: string): Promise<T | undefined> {
   const result = await chrome.storage.local.get(key)
@@ -211,22 +220,79 @@ function decodeTransactionIntent(to: string, data: string, value: bigint): Recor
   return details
 }
 
-async function requestApproval(request: ApprovalRequest): Promise<boolean> {
+async function requestApproval(
+  request: ApprovalRequest,
+  surface: 'popup' | 'window' = 'popup'
+): Promise<ApprovalDecision> {
   return new Promise((resolve) => {
-    pendingApprovals.set(request.id, { request, resolve })
-    const url = chrome.runtime.getURL(`approval.html?requestId=${request.id}`)
-    chrome.windows.create(
-      { url, type: 'popup', width: 420, height: 640 },
-      (window) => {
-        if (!window?.id) return
-        pendingApprovals.set(request.id, {
-          request,
-          resolve,
-          windowId: window.id
+    const openApprovalPopup = () => {
+      if (!chrome.action?.openPopup) return
+      chrome.action.openPopup().then(() => {
+        popupOpen = true
+        chrome.runtime.sendMessage({ type: 'APPROVAL_PENDING' }).catch(() => {})
+      }).catch(() => {
+        popupOpen = false
+      })
+    }
+
+    pendingApprovals.set(request.id, { request, resolve, surface })
+    if (surface === 'window') {
+      const url = chrome.runtime.getURL(`approval.html?requestId=${request.id}`)
+      chrome.windows.create(
+        { url, type: 'popup', width: 420, height: 640 },
+        (window) => {
+          if (!window?.id) return
+          const entry = pendingApprovals.get(request.id)
+          if (!entry) return
+          entry.windowId = window.id
+          entry.surface = 'window'
+          lastApprovalWindowId = window.id
+        }
+      )
+      return
+    }
+    if (popupOpen) {
+      chrome.runtime.sendMessage({ type: 'APPROVAL_PENDING' }, () => {
+        if (chrome.runtime.lastError) {
+          popupOpen = false
+          openApprovalPopup()
+        }
+      })
+      return
+    }
+    openApprovalPopup()
+  })
+}
+
+function resolvePendingUnlocks(unlocked: boolean): void {
+  if (pendingUnlocks.length === 0) return
+  const resolvers = pendingUnlocks.splice(0, pendingUnlocks.length)
+  unlockPromptOpen = false
+  resolvers.forEach((resolve) => resolve(unlocked))
+}
+
+async function requestUnlock(): Promise<boolean> {
+  if (unlockedVault) return true
+  return new Promise((resolve) => {
+    pendingUnlocks.push(resolve)
+    if (pendingUnlocks.length > 1 || unlockPromptOpen) return
+    unlockPromptOpen = true
+    const url = chrome.runtime.getURL('popup.html')
+    if (chrome.action?.openPopup) {
+      chrome.action.openPopup().then(() => {
+        popupOpen = true
+      }).catch(() => {
+        chrome.windows.create({ url, type: 'popup', width: 420, height: 640 }, (window) => {
+          if (!window?.id) return
+          lastUnlockWindowId = window.id
         })
-        lastApprovalWindowId = window.id
-      }
-    )
+      })
+      return
+    }
+    chrome.windows.create({ url, type: 'popup', width: 420, height: 640 }, (window) => {
+      if (!window?.id) return
+      lastUnlockWindowId = window.id
+    })
   })
 }
 
@@ -234,11 +300,17 @@ chrome.windows.onRemoved.addListener((windowId) => {
   for (const [id, entry] of pendingApprovals.entries()) {
     if (entry.windowId === windowId) {
       pendingApprovals.delete(id)
-      entry.resolve(false)
+      entry.resolve({ approved: false })
     }
   }
   if (lastApprovalWindowId === windowId) {
     lastApprovalWindowId = null
+  }
+  if (lastUnlockWindowId === windowId) {
+    lastUnlockWindowId = null
+    if (!unlockedVault) {
+      resolvePendingUnlocks(false)
+    }
   }
 })
 
@@ -393,6 +465,23 @@ async function getPrimaryAddress(): Promise<string | null> {
   return cachedAddress
 }
 
+async function ensureUnlockedWithPrompt(): Promise<VaultData> {
+  if (await isAutoLocked()) {
+    await lockVault()
+  }
+  if (!unlockedVault) {
+    const unlocked = await requestUnlock()
+    if (!unlocked) {
+      throw unauthorized()
+    }
+  }
+  if (!unlockedVault) {
+    throw unauthorized()
+  }
+  await touchActivity()
+  return unlockedVault
+}
+
 async function handleProviderRequest(payload: ProviderRequest): Promise<ProviderResponse> {
   try {
     const { method, params = [], origin } = payload
@@ -414,9 +503,14 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
     }
 
     if (method === 'eth_requestAccounts') {
-      await ensureUnlocked()
+      const existing = await getConnectedAccounts(origin)
+      if (existing.length) {
+        return { id: payload.id, result: existing }
+      }
+      const vault = await ensureUnlockedWithPrompt()
       const account = await getPrimaryAddress()
       if (!account) throw unauthorized('No account available')
+      const accounts = vault.accounts.map((entry) => entry.address)
 
       const approvalId = crypto.randomUUID()
       const approval: ApprovalRequest = {
@@ -424,14 +518,110 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
         kind: 'connect',
         origin,
         account,
+        accounts,
         createdAt: Date.now(),
         summary: buildApprovalSummary('connect'),
         details: { origin, account }
       }
-      const approved = await requestApproval(approval)
-      if (!approved) throw userRejected()
-      await setConnection(origin, [account])
-      return { id: payload.id, result: [account] }
+      const decision = await requestApproval(approval)
+      if (!decision.approved) throw userRejected()
+      const selectedAccount =
+        decision.account && accounts.includes(decision.account) ? decision.account : account
+      await setConnection(origin, [selectedAccount])
+      return { id: payload.id, result: [selectedAccount] }
+    }
+
+    if (method === 'wallet_requestPermissions') {
+      const [requested] = params as Array<Record<string, unknown>>
+      if (!requested || !Object.prototype.hasOwnProperty.call(requested, 'eth_accounts')) {
+        throw invalidParams('Only eth_accounts permissions are supported')
+      }
+      const existing = await getConnectedAccounts(origin)
+      if (existing.length) {
+        return {
+          id: payload.id,
+          result: [
+            {
+              parentCapability: 'eth_accounts',
+              caveats: [
+                {
+                  type: 'restrictReturnedAccounts',
+                  value: existing
+                }
+              ]
+            }
+          ]
+        }
+      }
+      const vault = await ensureUnlockedWithPrompt()
+      const account = await getPrimaryAddress()
+      if (!account) throw unauthorized('No account available')
+      const accounts = vault.accounts.map((entry) => entry.address)
+
+      const approvalId = crypto.randomUUID()
+      const approval: ApprovalRequest = {
+        id: approvalId,
+        kind: 'connect',
+        origin,
+        account,
+        accounts,
+        createdAt: Date.now(),
+        summary: buildApprovalSummary('connect'),
+        details: { origin, account }
+      }
+      const decision = await requestApproval(approval)
+      if (!decision.approved) throw userRejected()
+      const selectedAccount =
+        decision.account && accounts.includes(decision.account) ? decision.account : account
+      await setConnection(origin, [selectedAccount])
+      return {
+        id: payload.id,
+        result: [
+          {
+            parentCapability: 'eth_accounts',
+            caveats: [
+              {
+                type: 'restrictReturnedAccounts',
+                value: [selectedAccount]
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    if (method === 'wallet_getPermissions') {
+      const accounts = await getConnectedAccounts(origin)
+      if (!accounts.length) {
+        return { id: payload.id, result: [] }
+      }
+      return {
+        id: payload.id,
+        result: [
+          {
+            parentCapability: 'eth_accounts',
+            caveats: [
+              {
+                type: 'restrictReturnedAccounts',
+                value: accounts
+              }
+            ]
+          }
+        ]
+      }
+    }
+
+    if (method === 'wallet_revokePermissions') {
+      const [requested] = params as Array<Record<string, unknown>>
+      if (!requested || !Object.prototype.hasOwnProperty.call(requested, 'eth_accounts')) {
+        throw invalidParams('Only eth_accounts permissions are supported')
+      }
+      const connections = await getConnections()
+      if (connections[origin]) {
+        delete connections[origin]
+        await storageSet({ [STORAGE_KEYS.connections]: connections })
+      }
+      return { id: payload.id, result: null }
     }
 
     if (method === 'personal_sign') {
@@ -459,8 +649,8 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
         summary: buildApprovalSummary('sign_message'),
         details: { message: decoded }
       }
-      const approved = await requestApproval(approval)
-      if (!approved) throw userRejected()
+      const decision = await requestApproval(approval)
+      if (!decision.approved) throw userRejected()
 
       const wallet = await getSigner()
       const signature = await wallet.signMessage(isHexString(message) ? getBytes(message) : message)
@@ -503,8 +693,8 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
           primaryType: parsed.primaryType
         }
       }
-      const approved = await requestApproval(approval)
-      if (!approved) throw userRejected()
+      const decision = await requestApproval(approval)
+      if (!decision.approved) throw userRejected()
 
       const wallet = await getSigner()
       const signature = await wallet.signTypedData(parsed.domain, parsed.types, parsed.message)
@@ -552,8 +742,8 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
         estimatedFee,
         feeTokenBalance
       }
-      const approved = await requestApproval(approval)
-      if (!approved) throw userRejected()
+      const decision = await requestApproval(approval)
+      if (!decision.approved) throw userRejected()
 
       const txHash = await rpcRequest<string>('eth_sendRawTransaction', [rawTx])
       return { id: payload.id, result: txHash }
@@ -640,6 +830,14 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         }
         return { ok: true, result: state }
       }
+      case 'GET_PENDING_APPROVAL': {
+        for (const entry of pendingApprovals.values()) {
+          if (entry.surface === 'popup') {
+            return { ok: true, result: entry.request }
+          }
+        }
+        return { ok: true, result: null }
+      }
       case 'GET_PRIVATE_KEY': {
         const vault = await ensureUnlocked()
         const index = await getSelectedAccountIndex()
@@ -679,6 +877,7 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         cachedAccountIndex = 0
         vaultPassword = password
         await touchActivity()
+        resolvePendingUnlocks(true)
         return { ok: true, result: { address: wallet.address } }
       }
       case 'IMPORT_WALLET': {
@@ -702,6 +901,7 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         cachedAccountIndex = 0
         vaultPassword = password
         await touchActivity()
+        resolvePendingUnlocks(true)
         return { ok: true, result: { address: wallet.address } }
       }
       case 'UNLOCK': {
@@ -714,6 +914,7 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         cachedAccountIndex = index
         vaultPassword = password
         await touchActivity()
+        resolvePendingUnlocks(true)
         return { ok: true, result: { address: cachedAddress } }
       }
       case 'LOCK': {
@@ -830,6 +1031,19 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
 }
 
 chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendResponse) => {
+  if (message.type === 'POPUP_CLOSED') {
+    popupOpen = false
+    if (!unlockedVault) {
+      resolvePendingUnlocks(false)
+    }
+    for (const [id, entry] of pendingApprovals.entries()) {
+      if (entry.surface === 'popup') {
+        pendingApprovals.delete(id)
+        entry.resolve({ approved: false })
+      }
+    }
+    return
+  }
   if (message.type === 'PROVIDER_REQUEST') {
     handleProviderRequest(message.payload)
       .then((response) => sendResponse(response))
@@ -841,6 +1055,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
   }
 
   if (message.type === 'UI_REQUEST') {
+    popupOpen = true
     handleUiRequest(message)
       .then((response) => sendResponse(response))
       .catch((error) => sendResponse({ ok: false, error: toProviderError(error) }))
@@ -861,7 +1076,7 @@ chrome.runtime.onMessage.addListener((message: BackgroundRequest, _sender, sendR
     const entry = pendingApprovals.get(message.requestId)
     if (entry) {
       pendingApprovals.delete(message.requestId)
-      entry.resolve(message.approved)
+      entry.resolve({ approved: message.approved, account: message.account })
     }
     sendResponse({ ok: true })
     return false

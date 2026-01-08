@@ -21,6 +21,7 @@ type Screen =
   | 'confirm'
   | 'import'
   | 'unlock'
+  | 'approval'
   | 'home'
   | 'send'
   | 'send_confirm'
@@ -57,6 +58,9 @@ export function PopupApp() {
     approval: ApprovalRequest
     rawTx: string
   } | null>(null)
+  const [pendingApproval, setPendingApproval] = React.useState<ApprovalRequest | null>(null)
+  const [approvalAccount, setApprovalAccount] = React.useState<string>('')
+  const [approvalDropdownOpen, setApprovalDropdownOpen] = React.useState<boolean>(false)
   const [feeToken, setFeeToken] = React.useState<string>('')
   const [autoLockMinutes, setAutoLockMinutes] = React.useState<number>(5)
   const [copied, setCopied] = React.useState<boolean>(false)
@@ -67,10 +71,39 @@ export function PopupApp() {
   }, [])
 
   React.useEffect(() => {
+    const handleClose = () => {
+      chrome.runtime.sendMessage({ type: 'POPUP_CLOSED' })
+    }
+    window.addEventListener('beforeunload', handleClose)
+    return () => window.removeEventListener('beforeunload', handleClose)
+  }, [])
+
+  React.useEffect(() => {
+    const handleMessage = (message: { type?: string }) => {
+      if (message?.type === 'APPROVAL_PENDING') {
+        loadPendingApproval(state ?? undefined)
+      }
+    }
+    chrome.runtime.onMessage.addListener(handleMessage)
+    return () => chrome.runtime.onMessage.removeListener(handleMessage)
+  }, [state])
+
+  React.useEffect(() => {
     if (screen === 'unlock') {
       window.setTimeout(() => unlockInputRef.current?.focus(), 0)
     }
   }, [screen])
+
+  React.useEffect(() => {
+    if (!pendingApproval) return
+    setApprovalAccount((current) => {
+      if (current && pendingApproval.accounts?.includes(current)) {
+        return current
+      }
+      return pendingApproval.accounts?.[0] ?? pendingApproval.account
+    })
+    setApprovalDropdownOpen(false)
+  }, [pendingApproval])
 
   function showStatus(message: string, timeoutMs = 2000, txHash?: string) {
     setStatus({ message, txHash })
@@ -90,10 +123,23 @@ export function PopupApp() {
       } else {
         setScreen('home')
       }
+      await loadPendingApproval(result)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to load state'
       setError(message)
       setErrorLog((prev) => [`${new Date().toISOString()} ${message}`, ...prev].slice(0, 10))
+    }
+  }
+
+  async function loadPendingApproval(currentState?: PopupState) {
+    try {
+      const approval = await sendUiRequest<ApprovalRequest | null>('GET_PENDING_APPROVAL')
+      setPendingApproval(approval)
+      if (approval && !currentState?.locked) {
+        setScreen('approval')
+      }
+    } catch (_err) {
+      setPendingApproval(null)
     }
   }
 
@@ -205,6 +251,18 @@ export function PopupApp() {
     }
   }
 
+  async function handleApprovalResponse(approved: boolean) {
+    if (!pendingApproval) return
+    await chrome.runtime.sendMessage({
+      type: 'APPROVAL_RESPONSE',
+      requestId: pendingApproval.id,
+      approved,
+      account: approvalAccount
+    })
+    setPendingApproval(null)
+    await refreshState()
+  }
+
   async function handleSettingsSave() {
     setError('')
     try {
@@ -227,6 +285,12 @@ export function PopupApp() {
   function truncateAddress(address?: string) {
     if (!address) return ''
     return `${address.slice(0, 6)}…${address.slice(-4)}`
+  }
+
+  function formatAccountLabel(account: string, accountsList: string[]) {
+    const index = accountsList.findIndex((entry) => entry === account)
+    const labelIndex = index >= 0 ? index + 1 : 1
+    return `Wallet ${labelIndex} · ${truncateAddress(account)}`
   }
 
   function truncateHash(hash?: string) {
@@ -502,6 +566,86 @@ export function PopupApp() {
         </section>
       )}
 
+      {screen === 'approval' && pendingApproval && (
+        <section className="card">
+          <h2>Approve</h2>
+          <p className="muted">{pendingApproval.summary}</p>
+          {pendingApproval.estimatedFee &&
+            pendingApproval.feeTokenBalance &&
+            Number(pendingApproval.estimatedFee) > Number(pendingApproval.feeTokenBalance) && (
+              <div className="banner banner--warning">
+                Insufficient fee token balance for the estimated fee.
+              </div>
+            )}
+          <div className="confirm-detail">
+            <span>Origin</span>
+            <strong>{pendingApproval.origin}</strong>
+          </div>
+          <div className="confirm-detail">
+            <span>Account</span>
+            {pendingApproval.kind === 'connect' && pendingApproval.accounts?.length ? (
+              <div className="account-select">
+                <button
+                  type="button"
+                  className="account-trigger mono"
+                  onClick={() => setApprovalDropdownOpen((open) => !open)}
+                  aria-expanded={approvalDropdownOpen}
+                  title={approvalAccount}
+                >
+                  {formatAccountLabel(approvalAccount, pendingApproval.accounts)}
+                </button>
+                {approvalDropdownOpen && (
+                  <div className="account-list">
+                    {pendingApproval.accounts.map((account) => (
+                      <button
+                        key={account}
+                        type="button"
+                        className={`account-option mono${account === approvalAccount ? ' is-active' : ''}`}
+                        onClick={() => {
+                          setApprovalAccount(account)
+                          setApprovalDropdownOpen(false)
+                        }}
+                        title={account}
+                      >
+                        {formatAccountLabel(account, pendingApproval.accounts)}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <strong className="mono">{pendingApproval.account}</strong>
+            )}
+          </div>
+          {pendingApproval.feeToken && (
+            <div className="confirm-detail">
+              <span>Fee token</span>
+              <strong className="mono">{pendingApproval.feeToken}</strong>
+            </div>
+          )}
+          {pendingApproval.estimatedFee && (
+            <div className="confirm-detail">
+              <span>Estimated fee</span>
+              <strong>{pendingApproval.estimatedFee}</strong>
+            </div>
+          )}
+          {Object.entries(pendingApproval.details)
+            .filter(([key]) => key !== 'origin' && key !== 'account')
+            .map(([key, value], index) => (
+              <div key={`${key}-${index}`} className="confirm-detail">
+                <span>{key}</span>
+                <strong className="mono">{value}</strong>
+              </div>
+            ))}
+          <div className="actions">
+            <button onClick={() => handleApprovalResponse(true)}>Approve</button>
+            <button className="ghost" onClick={() => handleApprovalResponse(false)}>
+              Reject
+            </button>
+          </div>
+        </section>
+      )}
+
       {screen === 'home' && state && (
         <section className="card">
           <div className="balance-hero">
@@ -526,21 +670,18 @@ export function PopupApp() {
               ))}
             </div>
           </div>
-          {false && (
-            <div>
-              <span className="label">Connected sites</span>
-              {Object.keys(state.connections).length === 0 ? (
-                <p className="muted">No active connections.</p>
-              ) : (
-                Object.entries(state.connections).map(([origin, info]) => (
-                  <div key={origin} className="list-item">
-                    <span>{origin}</span>
-                    <span className="mono">{info.allowedAccounts[0]}</span>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
+          <div>
+            <span className="label">Connected sites</span>
+            {Object.keys(state.connections).length === 0 ? (
+              <p className="muted">No active connections.</p>
+            ) : (
+              Object.entries(state.connections).map(([origin, info]) => (
+                <div key={origin} className="list-item">
+                  <span>{origin}</span>
+                </div>
+              ))
+            )}
+          </div>
         </section>
       )}
 
@@ -723,7 +864,7 @@ export function PopupApp() {
         </section>
       )}
 
-      {state?.hasVault && !state.locked && (
+      {state?.hasVault && !state.locked && screen !== 'approval' && (
         <nav className="bottom-nav">
           <button
             className={screen === 'home' ? 'active' : ''}

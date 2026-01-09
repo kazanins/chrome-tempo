@@ -894,6 +894,9 @@ export function PopupApp() {
           <button className="button-large button-large--primary" onClick={() => setScreen('send')}>
             Send
           </button>
+          <button className="ghost button-secondary" onClick={handleLock}>
+            Lock now
+          </button>
           {Object.keys(state.connections).length > 0 && (
             <div className="connection-status">
               <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="connection-icon">
@@ -1263,10 +1266,6 @@ export function PopupApp() {
 
           <button className="button-large button-large--primary" onClick={handleSettingsSave}>
             Save Settings
-          </button>
-
-          <button className="ghost button-secondary" onClick={handleLock}>
-            Lock now
           </button>
         </div>
       )}

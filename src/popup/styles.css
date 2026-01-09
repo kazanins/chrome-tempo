@@ -156,11 +156,11 @@ body {
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 16px;
-  padding: 14px;
+  padding: 12px;
   box-shadow: var(--shadow);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .card h2 {
@@ -408,45 +408,46 @@ button.ghost {
 
 .balance-hero {
   background: #f7f7f7;
-  border-radius: 16px;
-  padding: 16px;
+  border-radius: 14px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   border: 1px solid var(--border);
 }
 
 .balance-hero span {
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.14em;
   color: var(--muted);
 }
 
 .balance-hero strong {
-  font-size: 28px;
+  font-size: 24px;
   letter-spacing: -0.02em;
   font-weight: 500;
 }
 
 .balance-hero small {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
 .token-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  margin-top: 8px;
+  gap: 6px;
+  margin-top: 6px;
 }
 
 .token-row {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 12px;
-  padding: 10px 12px;
-  border-radius: 14px;
+  padding: 8px 10px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   background: var(--surface-2);
   box-shadow: none;
@@ -454,25 +455,26 @@ button.ghost {
 
 .token-row strong {
   display: block;
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .token-meta {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .token-icon {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   color: white;
+  flex-shrink: 0;
 }
 
 .token-icon--pathusd {
@@ -492,8 +494,9 @@ button.ghost {
 }
 
 .token-amount {
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
+  line-height: 1;
 }
 
 .label {
@@ -809,15 +812,15 @@ label {
   width: 100%;
   border: none;
   border-radius: 12px;
-  padding: 14px 20px;
-  font-size: 14px;
+  padding: 13px 20px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
   letter-spacing: 0.02em;
   text-transform: uppercase;
   transition: all 0.2s ease;
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .button-large--primary {
@@ -836,9 +839,9 @@ label {
 
 .button-secondary {
   width: 100%;
-  margin-top: 8px;
-  padding: 12px 20px;
-  font-size: 12px;
+  margin-top: 6px;
+  padding: 10px 20px;
+  font-size: 11px;
   border-radius: 12px;
   text-align: center;
 }

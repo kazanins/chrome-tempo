@@ -499,11 +499,36 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
 
     if (method === 'eth_accounts') {
       const accounts = await getConnectedAccounts(origin)
+      console.log('[tempo] eth_accounts', { origin, accounts })
       return { id: payload.id, result: accounts }
+    }
+
+    if (method === 'tempo_debugConnectedAccounts') {
+      const connections = await getConnections()
+      const entry = connections[origin]
+      const selectedAccount = await getPrimaryAddress()
+      const allowedAccounts = entry?.allowedAccounts ?? []
+      const lastConnectedAt = entry?.lastConnectedAt ?? null
+      return {
+        id: payload.id,
+        result: {
+          origin,
+          allowedAccounts,
+          lastConnectedAt,
+          selectedAccount,
+          isSelectedAllowed: Boolean(selectedAccount && allowedAccounts.includes(selectedAccount))
+        }
+      }
+    }
+
+    if (method === 'tempo_isUnlocked') {
+      const autoLocked = await isAutoLocked()
+      return { id: payload.id, result: { unlocked: Boolean(unlockedVault) && !autoLocked } }
     }
 
     if (method === 'eth_requestAccounts') {
       const existing = await getConnectedAccounts(origin)
+      console.log('[tempo] eth_requestAccounts:existing', { origin, accounts: existing })
       if (existing.length) {
         return { id: payload.id, result: existing }
       }
@@ -528,6 +553,7 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
       const selectedAccount =
         decision.account && accounts.includes(decision.account) ? decision.account : account
       await setConnection(origin, [selectedAccount])
+      console.log('[tempo] eth_requestAccounts:connected', { origin, account: selectedAccount })
       return { id: payload.id, result: [selectedAccount] }
     }
 
@@ -633,10 +659,23 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
         account = getAddress(message)
         message = accountParam
       }
-      await ensureUnlocked()
+      const vault = await ensureUnlocked()
 
       const connected = await getConnectedAccounts(origin)
-      if (!connected.includes(account)) throw unauthorized('Account not connected')
+      if (!connected.length) throw unauthorized('Account not connected')
+      const targetAccount = connected[0]
+      const accountIndex = vault.accounts.findIndex(
+        (entry) => entry.address.toLowerCase() === targetAccount.toLowerCase()
+      )
+      if (accountIndex < 0) throw unauthorized('Account not connected')
+      if (cachedAccountIndex !== accountIndex) {
+        await setSelectedAccountIndex(accountIndex)
+        cachedAccountIndex = accountIndex
+        cachedAddress = vault.accounts[accountIndex]?.address ?? null
+      }
+      if (account.toLowerCase() !== targetAccount.toLowerCase()) {
+        throw unauthorized('Account not connected')
+      }
 
       const approvalId = crypto.randomUUID()
       const decoded = isHexString(message) ? new TextDecoder().decode(getBytes(message)) : message
@@ -668,10 +707,23 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
         account = getAddress(second)
         typedData = first
       }
-      await ensureUnlocked()
+      const vault = await ensureUnlocked()
 
       const connected = await getConnectedAccounts(origin)
-      if (!connected.includes(account)) throw unauthorized('Account not connected')
+      if (!connected.length) throw unauthorized('Account not connected')
+      const targetAccount = connected[0]
+      const accountIndex = vault.accounts.findIndex(
+        (entry) => entry.address.toLowerCase() === targetAccount.toLowerCase()
+      )
+      if (accountIndex < 0) throw unauthorized('Account not connected')
+      if (cachedAccountIndex !== accountIndex) {
+        await setSelectedAccountIndex(accountIndex)
+        cachedAccountIndex = accountIndex
+        cachedAddress = vault.accounts[accountIndex]?.address ?? null
+      }
+      if (account.toLowerCase() !== targetAccount.toLowerCase()) {
+        throw unauthorized('Account not connected')
+      }
 
       const parsed = JSON.parse(typedData) as {
         domain: Record<string, unknown>
@@ -705,13 +757,33 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
       const [txRequest] = params as Array<Record<string, string | undefined>>
       if (!txRequest?.from || !txRequest.to) throw invalidParams('Missing from or to')
       const from = getAddress(txRequest.from)
-      const account = await getPrimaryAddress()
-      if (!account || account.toLowerCase() !== from.toLowerCase()) {
+      const connected = await getConnectedAccounts(origin)
+      if (!connected.length) throw unauthorized('Account not connected')
+      if (await isAutoLocked()) {
+        await lockVault()
+        throw unauthorized('Wallet locked')
+      }
+      if (!unlockedVault) {
+        throw unauthorized('Wallet locked')
+      }
+      await touchActivity()
+      const targetAccount = connected[0]
+      const accountIndex = unlockedVault.accounts.findIndex(
+        (entry) => entry.address.toLowerCase() === targetAccount.toLowerCase()
+      )
+      if (accountIndex < 0) throw unauthorized('Account not connected')
+      if (cachedAccountIndex !== accountIndex) {
+        await setSelectedAccountIndex(accountIndex)
+        cachedAccountIndex = accountIndex
+        cachedAddress = unlockedVault.accounts[accountIndex]?.address ?? null
+      }
+      const account = cachedAddress
+      if (!account) throw unauthorized('No account available')
+      if (account.toLowerCase() !== from.toLowerCase()) {
         throw unauthorized('Account not connected')
       }
 
-      await ensureUnlocked()
-      const connected = await getConnectedAccounts(origin)
+      console.log('[tempo] eth_sendTransaction:connected', { origin, connected, from })
       if (!connected.includes(account)) throw unauthorized('Account not connected')
 
       const feeToken = isHexString(String(txRequest.feeToken ?? ''), 20)
@@ -750,6 +822,11 @@ async function handleProviderRequest(payload: ProviderRequest): Promise<Provider
     }
 
     if (method === 'eth_getBalance' || method === 'eth_call') {
+      const result = await rpcRequest(method, params)
+      return { id: payload.id, result }
+    }
+
+    if (method === 'eth_getTransactionReceipt') {
       const result = await rpcRequest(method, params)
       return { id: payload.id, result }
     }

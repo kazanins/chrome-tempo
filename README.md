@@ -9,7 +9,7 @@ worker that owns keys and signs Tempo Transactions (type 0x76).
 - Tempo-only chain configuration (no network switching).
 - EIP-1193 provider with `eth_requestAccounts`, `eth_accounts`, `eth_chainId`,
   `net_version`, `eth_sendTransaction`, `personal_sign`, `eth_signTypedData_v4`,
-  `eth_getBalance`, and `eth_call`.
+  `eth_getBalance`, `eth_call`, and `eth_getTransactionReceipt`.
 - Approval windows for all signing/transaction requests, including decoded intent.
 - TIP-20 fee token support with default fee token storage.
 - Vault encryption using PBKDF2 + AES-GCM (WebCrypto).
@@ -66,4 +66,3 @@ npm test
 
 - If the wallet is locked, you must unlock via the popup before signing or sending.
 - If a dapp is not connected, use `eth_requestAccounts` to trigger approval.
-

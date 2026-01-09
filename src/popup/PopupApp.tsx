@@ -1204,47 +1204,71 @@ export function PopupApp() {
       )}
 
       {screen === 'settings' && state && (
-        <section className="card">
-          <h2>Settings</h2>
-          <label>
-            RPC URL
-            <input value={state.rpcUrl} readOnly />
-          </label>
-          <label>
-            Default fee token
-            <select value={feeToken} onChange={(event) => setFeeToken(event.target.value)}>
-              {TEMPO_TOKENS.map((token) => (
-                <option key={token.address} value={normalizeAddress(token.address)}>
-                  {token.symbol}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="settings-row">
-            <span>Export private key</span>
-            <button className="ghost" onClick={handleCopyPrivateKey}>
-              {privateKeyCopied ? 'Copied' : 'Copy'}
+        <div className="send-flow">
+          <div className="send-flow__header">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Back to home"
+              onClick={() => setScreen('home')}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
             </button>
+            <h2>Settings</h2>
+            <div style={{ width: '30px' }}></div>
           </div>
-          <label>
-            Auto-lock (minutes)
-            <input
-              type="number"
-              min={1}
-              value={autoLockMinutes}
-              onChange={(event) => setAutoLockMinutes(Number(event.target.value))}
-            />
-          </label>
-          <div className="actions">
-            <button onClick={handleSettingsSave}>Save</button>
-            <button className="ghost" onClick={() => setScreen('home')}>
-              Back
-            </button>
-            <button className="ghost" onClick={handleLock}>
-              Lock now
-            </button>
+
+          <div className="form-section">
+            <label>
+              RPC URL
+              <input value={state.rpcUrl} readOnly />
+            </label>
           </div>
-        </section>
+
+          <div className="form-section">
+            <label>
+              Default fee token
+              <select value={feeToken} onChange={(event) => setFeeToken(event.target.value)}>
+                {TEMPO_TOKENS.map((token) => (
+                  <option key={token.address} value={normalizeAddress(token.address)}>
+                    {token.symbol}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="form-section">
+            <div className="settings-row">
+              <span>Export private key</span>
+              <button className="ghost" onClick={handleCopyPrivateKey}>
+                {privateKeyCopied ? 'Copied' : 'Copy'}
+              </button>
+            </div>
+          </div>
+
+          <div className="form-section">
+            <label>
+              Auto-lock (minutes)
+              <input
+                type="number"
+                min={1}
+                value={autoLockMinutes}
+                onChange={(event) => setAutoLockMinutes(Number(event.target.value))}
+              />
+            </label>
+          </div>
+
+          <button className="button-large button-large--primary" onClick={handleSettingsSave}>
+            Save Settings
+          </button>
+
+          <button className="ghost button-secondary" onClick={handleLock}>
+            Lock now
+          </button>
+        </div>
       )}
 
     </div>

@@ -398,7 +398,12 @@ button.ghost {
   justify-content: space-between;
   gap: 12px;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--ink);
+  font-weight: 500;
+}
+
+.send-flow .settings-row {
+  padding: 0;
 }
 
 .balance-hero {
@@ -827,6 +832,15 @@ label {
 .button-large--primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.button-secondary {
+  width: 100%;
+  margin-top: 8px;
+  padding: 12px 20px;
+  font-size: 12px;
+  border-radius: 12px;
+  text-align: center;
 }
 
 /* Connection Status */

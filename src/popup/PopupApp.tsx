@@ -55,6 +55,10 @@ export function PopupApp() {
     amount: '',
     memo: ''
   })
+  const [sendValidation, setSendValidation] = React.useState({
+    recipient: { status: 'idle' as 'idle' | 'valid' | 'invalid' | 'checking', message: '' },
+    amount: { status: 'idle' as 'idle' | 'valid' | 'invalid', message: '' }
+  })
   const [sendApproval, setSendApproval] = React.useState<{
     approval: ApprovalRequest
     rawTx: string
@@ -62,6 +66,8 @@ export function PopupApp() {
   const [pendingApproval, setPendingApproval] = React.useState<ApprovalRequest | null>(null)
   const [approvalAccount, setApprovalAccount] = React.useState<string>('')
   const [approvalDropdownOpen, setApprovalDropdownOpen] = React.useState<boolean>(false)
+  const [walletDropdownOpen, setWalletDropdownOpen] = React.useState<boolean>(false)
+  const [tokenDropdownOpen, setTokenDropdownOpen] = React.useState<boolean>(false)
   const [feeToken, setFeeToken] = React.useState<string>('')
   const [autoLockMinutes, setAutoLockMinutes] = React.useState<number>(5)
   const [copied, setCopied] = React.useState<boolean>(false)
@@ -106,6 +112,52 @@ export function PopupApp() {
     })
     setApprovalDropdownOpen(false)
   }, [pendingApproval])
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      if (sendForm.recipient) {
+        setSendValidation((prev) => ({
+          ...prev,
+          recipient: { status: 'checking', message: '' }
+        }))
+        const result = validateRecipientAddress(sendForm.recipient)
+        setSendValidation((prev) => ({
+          ...prev,
+          recipient: {
+            status: result.valid ? 'valid' : 'invalid',
+            message: result.message
+          }
+        }))
+      } else {
+        setSendValidation((prev) => ({
+          ...prev,
+          recipient: { status: 'idle', message: '' }
+        }))
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [sendForm.recipient, state?.selectedAccount, state?.address])
+
+  React.useEffect(() => {
+    if (sendForm.amount && sendForm.token) {
+      const tokenInfo = getTokenByAddress(sendForm.token)
+      if (tokenInfo) {
+        const result = validateAmount(sendForm.amount, tokenInfo.symbol)
+        setSendValidation((prev) => ({
+          ...prev,
+          amount: {
+            status: result.valid ? 'valid' : 'invalid',
+            message: result.message
+          }
+        }))
+      }
+    } else {
+      setSendValidation((prev) => ({
+        ...prev,
+        amount: { status: 'idle', message: '' }
+      }))
+    }
+  }, [sendForm.amount, sendForm.token, state?.tokenBalances])
 
   function showStatus(message: string, timeoutMs = 2000, txHash?: string) {
     setStatus({ message, txHash })
@@ -300,6 +352,61 @@ export function PopupApp() {
     return `${hash.slice(0, 10)}…${hash.slice(-6)}`
   }
 
+  function validateRecipientAddress(address: string): { valid: boolean; message: string } {
+    if (!address.trim()) {
+      return { valid: false, message: '' }
+    }
+
+    if (!isAddress(address)) {
+      return { valid: false, message: 'Invalid address format' }
+    }
+
+    const currentAddress = state?.selectedAccount ?? state?.address
+    if (currentAddress && address.toLowerCase() === currentAddress.toLowerCase()) {
+      return { valid: false, message: 'Cannot send to yourself' }
+    }
+
+    return { valid: true, message: 'Valid address' }
+  }
+
+  function validateAmount(amount: string, tokenSymbol: string): { valid: boolean; message: string } {
+    if (!amount.trim()) {
+      return { valid: false, message: '' }
+    }
+
+    const numAmount = Number(amount)
+    if (isNaN(numAmount) || numAmount <= 0) {
+      return { valid: false, message: 'Amount must be greater than 0' }
+    }
+
+    const decimalPart = amount.split('.')[1]
+    if (decimalPart && decimalPart.length > 6) {
+      return { valid: false, message: 'Maximum 6 decimal places' }
+    }
+
+    if (state?.tokenBalances && state.tokenBalances[tokenSymbol]) {
+      const balance = Number(state.tokenBalances[tokenSymbol])
+      if (numAmount > balance) {
+        return { valid: false, message: `Insufficient balance (${balance} ${tokenSymbol})` }
+      }
+    }
+
+    return { valid: true, message: 'Valid amount' }
+  }
+
+  function formatTokenAmount(value: string, decimals: number = 6): string {
+    if (!value) return '0'
+    const parts = value.split('.')
+    if (parts.length === 1) return value
+    return `${parts[0]}.${parts[1].slice(0, decimals)}`
+  }
+
+  function getTokenByAddress(address: string) {
+    return TEMPO_TOKENS.find(
+      (t) => normalizeAddress(t.address) === normalizeAddress(address)
+    )
+  }
+
   async function handleCopyAddress() {
     if (!state?.selectedAccount && !state?.address) return
     const address = state?.selectedAccount ?? state?.address
@@ -322,6 +429,49 @@ export function PopupApp() {
     }
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1200)
+  }
+
+  function handleMaxAmount() {
+    if (!sendForm.token || !state?.tokenBalances) return
+
+    const tokenInfo = getTokenByAddress(sendForm.token)
+    if (!tokenInfo) return
+
+    const balance = state.tokenBalances[tokenInfo.symbol] || '0'
+    setSendForm({ ...sendForm, amount: balance })
+  }
+
+  async function handlePasteRecipient() {
+    const input = document.querySelector('input[placeholder="0x..."]') as HTMLInputElement
+    if (!input) return
+
+    try {
+      // Try modern clipboard API first
+      if (navigator.clipboard?.readText) {
+        const text = await navigator.clipboard.readText()
+        if (isAddress(text)) {
+          setSendForm({ ...sendForm, recipient: text })
+        } else {
+          setError('Clipboard does not contain a valid address')
+        }
+      } else {
+        // Fallback: focus input and trigger paste
+        input.focus()
+        document.execCommand('paste')
+      }
+    } catch (err) {
+      // If clipboard API fails, just focus the input so user can paste manually
+      input.focus()
+      input.select()
+    }
+  }
+
+  function handleClearRecipient() {
+    setSendForm({ ...sendForm, recipient: '' })
+    setSendValidation((prev) => ({
+      ...prev,
+      recipient: { status: 'idle', message: '' }
+    }))
   }
 
   function handleAddWallet() {
@@ -347,10 +497,18 @@ export function PopupApp() {
     }
   }
 
-  async function handleAccountChange(event: React.ChangeEvent<HTMLSelectElement>) {
-    const address = event.target.value
+  async function handleAccountChange(address: string) {
     if (!address) return
+
+    // Check if "Create new wallet" was selected
+    if (address === '__create_new__') {
+      handleAddWallet()
+      setWalletDropdownOpen(false)
+      return
+    }
+
     setError('')
+    setWalletDropdownOpen(false)
     try {
       await sendUiRequest<{ address: string }>('SET_ACTIVE_ACCOUNT', { address })
       await refreshState()
@@ -401,32 +559,43 @@ export function PopupApp() {
 
   return (
     <div className="app">
-      <header className="app__header">
-        {selectedAddress ? (
+      {screen !== 'unlock' && (
+        <header className="app__header">
+          {selectedAddress ? (
           <div className="header-address">
-            <select
-              className="wallet-select"
-              value={selectedAddress}
-              onChange={handleAccountChange}
-              aria-label="Select wallet"
-            >
-              {accounts.map((address, index) => (
-                <option key={address} value={address}>
-                  Wallet {index + 1} · {truncateAddress(address)}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              className={`icon-button ${copied ? 'icon-button--copied' : ''}`}
-              aria-label="Copy address"
-              onClick={handleCopyAddress}
-            >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <rect x="9" y="9" width="11" height="11" rx="2" ry="2" />
-                <rect x="4" y="4" width="11" height="11" rx="2" ry="2" />
-              </svg>
-            </button>
+            <div className="account-select">
+              <button
+                type="button"
+                className="account-trigger mono"
+                onClick={() => setWalletDropdownOpen((open) => !open)}
+                aria-expanded={walletDropdownOpen}
+                title={selectedAddress}
+              >
+                {formatAccountLabel(selectedAddress, accounts)}
+              </button>
+              {walletDropdownOpen && (
+                <div className="account-list">
+                  {accounts.map((address) => (
+                    <button
+                      key={address}
+                      type="button"
+                      className={`account-option mono${address === selectedAddress ? ' is-active' : ''}`}
+                      onClick={() => handleAccountChange(address)}
+                      title={address}
+                    >
+                      {formatAccountLabel(address, accounts)}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className="account-option account-option--action"
+                    onClick={() => handleAccountChange('__create_new__')}
+                  >
+                    + Create new wallet
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         ) : (
           <div className="header-address">
@@ -437,12 +606,24 @@ export function PopupApp() {
           <div className="header-actions">
             <button
               type="button"
-              className="icon-button icon-button--primary"
-              aria-label="Create new wallet"
-              onClick={handleAddWallet}
+              className={`icon-button ${copied ? 'icon-button--copied' : ''}`}
+              aria-label="Copy address"
+              onClick={handleCopyAddress}
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <path d="M12 5v14M5 12h14" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Settings"
+              onClick={() => setScreen('settings')}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
               </svg>
             </button>
             <a
@@ -452,14 +633,16 @@ export function PopupApp() {
               rel="noreferrer"
               aria-label="View on explorer"
             >
-              <svg viewBox="0 0 24 24" aria-hidden="true">
-                <circle cx="12" cy="12" r="9" />
-                <path d="M3 12h18M12 3a15 15 0 0 0 0 18M12 3a15 15 0 0 1 0 18" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="2" y1="12" x2="22" y2="12"></line>
+                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
               </svg>
             </a>
           </div>
         )}
-      </header>
+        </header>
+      )}
 
       {error && <div className="banner banner--error">{error}</div>}
       {status && (
@@ -582,26 +765,26 @@ export function PopupApp() {
       )}
 
       {screen === 'unlock' && (
-        <section className="card">
-          <h2>Unlock</h2>
-          <label>
-            Password
-            <input
-              ref={unlockInputRef}
-              type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') {
-                  handleUnlock()
-                }
-              }}
-            />
-          </label>
-          <div className="actions">
-            <button onClick={handleUnlock}>Unlock</button>
-          </div>
-        </section>
+        <div className="unlock-screen">
+          <img src="https://raw.githubusercontent.com/tempoxyz/.github/refs/heads/main/assets/combomark-bright.svg" alt="Tempo" className="unlock-logo" />
+          <h2 className="unlock-title">Unlock with password</h2>
+          <input
+            ref={unlockInputRef}
+            type="password"
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                handleUnlock()
+              }
+            }}
+            placeholder="Enter password"
+            className="unlock-input"
+          />
+          <button onClick={handleUnlock} className="button-large button-unlock">
+            Unlock
+          </button>
+        </div>
       )}
 
       {screen === 'approval' && pendingApproval && (
@@ -685,13 +868,13 @@ export function PopupApp() {
       )}
 
       {screen === 'home' && state && (
-        <section className="card">
-          <div className="balance-hero">
-            <span>Total Balance</span>
+        <>
+          <section className="card">
+            <div className="balance-hero">
+              <span>Total Balance</span>
               <strong>{formatAmount(state.totalBalance)}</strong>
-            <small>USD Stablecoins</small>
-          </div>
-          <div>
+              <small>USD Stablecoins</small>
+            </div>
             <div className="token-list">
               {TEMPO_TOKENS.map((token) => (
                 <div key={token.address} className="token-row">
@@ -707,72 +890,217 @@ export function PopupApp() {
                 </div>
               ))}
             </div>
-          </div>
-          <div>
-            <span className="label">Connected sites</span>
-            {Object.keys(state.connections).length === 0 ? (
-              <p className="muted">No active connections.</p>
-            ) : (
-              Object.entries(state.connections).map(([origin, info]) => (
-                <div key={origin} className="list-item">
-                  <span>{origin}</span>
-                </div>
-              ))
-            )}
-          </div>
-        </section>
+          </section>
+          <button className="button-large button-large--primary" onClick={() => setScreen('send')}>
+            Send
+          </button>
+          {Object.keys(state.connections).length > 0 && (
+            <div className="connection-status">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="connection-icon">
+                <path d="M5 12.55a11 11 0 0 1 14.08 0"></path>
+                <path d="M1.42 9a16 16 0 0 1 21.16 0"></path>
+                <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+                <line x1="12" y1="20" x2="12.01" y2="20"></line>
+              </svg>
+              <strong>{Object.keys(state.connections)[0]}</strong>
+            </div>
+          )}
+        </>
       )}
 
       {screen === 'send' && (
-        <section className="card">
-          <h2>Send TIP-20</h2>
-          <label>
-            Token
-            <select
-              value={sendForm.token}
-              onChange={(event) => setSendForm({ ...sendForm, token: event.target.value })}
-            >
-              <option value="">Select token</option>
-              {TEMPO_TOKENS.map((token) => (
-                <option key={token.address} value={token.address}>
-                  {token.symbol}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            Recipient
-            <input
-              value={sendForm.recipient}
-              onChange={(event) => setSendForm({ ...sendForm, recipient: event.target.value })}
-            />
-          </label>
-          <label>
-            Amount (6 decimals)
-            <input
-              value={sendForm.amount}
-              onChange={(event) => setSendForm({ ...sendForm, amount: event.target.value })}
-            />
-          </label>
-          <label>
-            Memo (optional)
-            <input
-              value={sendForm.memo}
-              onChange={(event) => setSendForm({ ...sendForm, memo: event.target.value })}
-            />
-          </label>
-          <div className="actions">
+        <div className="send-flow">
+          <div className="send-flow__header">
             <button
-              onClick={handleSendTip20}
-              disabled={!sendForm.token || !sendForm.recipient || !sendForm.amount}
+              type="button"
+              className="icon-button"
+              aria-label="Back to home"
+              onClick={() => setScreen('home')}
             >
-              Send
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
             </button>
-            <button className="ghost" onClick={() => setScreen('home')}>
-              Back
-            </button>
+            <h2>Send</h2>
+            <div style={{ width: '30px' }}></div>
           </div>
-        </section>
+
+          <div className="form-section">
+            <label>
+              Amount
+              <div className="amount-token-group">
+                <div className="input-with-validation amount-input">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={sendForm.amount}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      if (value === '' || /^\d*\.?\d*$/.test(value)) {
+                        setSendForm({ ...sendForm, amount: value })
+                      }
+                    }}
+                    placeholder="0.00"
+                    disabled={!sendForm.token}
+                  />
+                  {sendValidation.amount.status === 'valid' && (
+                    <span className="validation-icon validation-icon--valid">✓</span>
+                  )}
+                  {sendValidation.amount.status === 'invalid' && (
+                    <span className="validation-icon validation-icon--invalid">✗</span>
+                  )}
+                </div>
+                <div className="token-select-wrapper">
+                  <button
+                    type="button"
+                    className="token-select-trigger"
+                    onClick={() => setTokenDropdownOpen((open) => !open)}
+                    aria-expanded={tokenDropdownOpen}
+                  >
+                    {sendForm.token
+                      ? TEMPO_TOKENS.find((t) => t.address === sendForm.token)?.symbol || 'Token'
+                      : 'Token'}
+                  </button>
+                  {tokenDropdownOpen && (
+                    <div className="token-select-dropdown">
+                      {TEMPO_TOKENS.map((token) => (
+                        <button
+                          key={token.address}
+                          type="button"
+                          className={`token-option${token.address === sendForm.token ? ' is-active' : ''}`}
+                          onClick={() => {
+                            setSendForm({ ...sendForm, token: token.address })
+                            setSendValidation((prev) => ({
+                              ...prev,
+                              amount: { status: 'idle', message: '' }
+                            }))
+                            setTokenDropdownOpen(false)
+                          }}
+                        >
+                          {token.symbol}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="helper-button helper-button--max"
+                  onClick={handleMaxAmount}
+                  disabled={!sendForm.token}
+                  title="Use maximum available balance"
+                >
+                  MAX
+                </button>
+              </div>
+              {sendForm.token &&
+                (() => {
+                  const tokenInfo = getTokenByAddress(sendForm.token)
+                  const balance = tokenInfo ? state?.tokenBalances?.[tokenInfo.symbol] : undefined
+                  const isInsufficient =
+                    sendValidation.amount.status === 'invalid' &&
+                    sendValidation.amount.message.includes('Insufficient')
+                  return balance ? (
+                    <span className={`balance-hint ${isInsufficient ? 'balance-hint--insufficient' : ''}`}>
+                      Available: <span className="balance-value">{balance} {tokenInfo?.symbol}</span>
+                    </span>
+                  ) : null
+                })()}
+              {sendValidation.amount.message && (
+                <span className={`validation-message validation-message--${sendValidation.amount.status}`}>
+                  {sendValidation.amount.status === 'valid' ? '✓' : '✗'}{' '}
+                  {sendValidation.amount.message}
+                </span>
+              )}
+            </label>
+          </div>
+
+          <div className="form-section">
+            <label>
+              Recipient Address
+              {sendValidation.recipient.message && (
+                <span
+                  className={`validation-message validation-message--${sendValidation.recipient.status}`}
+                >
+                  {sendValidation.recipient.status === 'valid' ? '✓' : '✗'}{' '}
+                  {sendValidation.recipient.message}
+                </span>
+              )}
+              <div className="input-group">
+                <div className="input-with-validation">
+                  <input
+                    value={sendForm.recipient}
+                    onChange={(event) =>
+                      setSendForm({ ...sendForm, recipient: event.target.value })
+                    }
+                    placeholder="0x..."
+                  />
+                  {sendValidation.recipient.status === 'checking' && (
+                    <span className="validation-icon validation-icon--checking">⟳</span>
+                  )}
+                  {sendValidation.recipient.status === 'valid' && (
+                    <span className="validation-icon validation-icon--valid">✓</span>
+                  )}
+                  {sendValidation.recipient.status === 'invalid' && (
+                    <span className="validation-icon validation-icon--invalid">✗</span>
+                  )}
+                </div>
+                {!sendForm.recipient ? (
+                  <button
+                    type="button"
+                    className="helper-button helper-button--icon"
+                    onClick={handlePasteRecipient}
+                    title="Paste address"
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                      <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="helper-button helper-button--icon"
+                    onClick={handleClearRecipient}
+                    title="Clear"
+                  >
+                    <svg viewBox="0 0 24 24">
+                      <path d="M18 6L6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </label>
+          </div>
+
+          <div className="form-section">
+            <label>
+              Memo (optional)
+              <input
+                value={sendForm.memo}
+                onChange={(event) =>
+                  setSendForm({ ...sendForm, memo: event.target.value.slice(0, 32) })
+                }
+                placeholder="Payment note"
+                maxLength={32}
+              />
+            </label>
+          </div>
+
+          <button
+            className="button-large button-large--primary"
+            onClick={handleSendTip20}
+            disabled={
+              !sendForm.token ||
+              !sendForm.recipient ||
+              !sendForm.amount ||
+              sendValidation.recipient.status !== 'valid' ||
+              sendValidation.amount.status !== 'valid'
+            }
+          >
+            Review Transaction
+          </button>
+        </div>
       )}
 
       {errorLog.length > 0 && (
@@ -789,73 +1117,90 @@ export function PopupApp() {
       )}
 
       {screen === 'send_confirm' && sendApproval && (
-        <section className="card">
-          <h2>Confirm Send</h2>
+        <div className="send-flow">
+          <div className="send-flow__header">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Back to send"
+              onClick={() => {
+                setSendApproval(null)
+                setScreen('send')
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <h2>Confirm</h2>
+            <div style={{ width: '30px' }}></div>
+          </div>
+
           {sendApproval.approval.estimatedFee &&
             sendApproval.approval.feeTokenBalance &&
             Number(sendApproval.approval.estimatedFee) >
               Number(sendApproval.approval.feeTokenBalance) && (
               <div className="banner banner--warning">
-                Insufficient fee token balance for the estimated fee.
+                <strong>Warning:</strong> Insufficient fee token balance. Transaction may fail.
               </div>
             )}
-          {(() => {
-            const tokenInfo = TEMPO_TOKENS.find(
-              (token) =>
-                normalizeAddress(token.address) ===
-                normalizeAddress(sendApproval.approval.details.token)
-            )
-            const symbol = tokenInfo?.symbol ?? 'TIP-20'
-            const iconClass = `token-icon token-icon--${symbol.toLowerCase()}`
-            const formattedAmount = `${sendApproval.approval.details.amount} ${symbol}`
-            const feeTokenInfo = TEMPO_TOKENS.find(
-              (token) =>
-                normalizeAddress(token.address) ===
-                normalizeAddress(sendApproval.approval.feeToken)
-            )
-            const feeTokenSymbol = feeTokenInfo?.symbol ?? sendApproval.approval.feeToken
-            const feeIconClass = `token-icon token-icon--${feeTokenSymbol.toLowerCase()}`
-            return (
-              <>
-                <div className="confirm-detail">
-                  <span>Amount</span>
-                  <div className="confirm-inline">
-                    <span className={iconClass} aria-hidden="true">
-                      {symbol[0]}
-                    </span>
-                    <strong>{formattedAmount}</strong>
+          <div className="confirm-card">
+            {(() => {
+              const tokenInfo = TEMPO_TOKENS.find(
+                (token) =>
+                  normalizeAddress(token.address) ===
+                  normalizeAddress(sendApproval.approval.details.token)
+              )
+              const symbol = tokenInfo?.symbol ?? 'TIP-20'
+              const iconClass = `token-icon token-icon--${symbol.toLowerCase()}`
+              const formattedAmount = `${sendApproval.approval.details.amount} ${symbol}`
+              const feeTokenInfo = TEMPO_TOKENS.find(
+                (token) =>
+                  normalizeAddress(token.address) ===
+                  normalizeAddress(sendApproval.approval.feeToken)
+              )
+              const feeTokenSymbol = feeTokenInfo?.symbol ?? sendApproval.approval.feeToken
+              const feeIconClass = `token-icon token-icon--${feeTokenSymbol.toLowerCase()}`
+              return (
+                <>
+                  <div className="confirm-detail">
+                    <span>Amount</span>
+                    <div className="confirm-inline">
+                      <span className={iconClass} aria-hidden="true">
+                        {symbol[0]}
+                      </span>
+                      <strong>{formattedAmount}</strong>
+                    </div>
                   </div>
-                </div>
-                <div className="confirm-detail">
-                  <span>Recipient</span>
-                  <strong className="mono">{sendApproval.approval.details.recipient}</strong>
-                </div>
-                <div className="confirm-detail">
-                  <span>Estimated fee</span>
-                  <div className="confirm-inline">
-                    <span className={feeIconClass} aria-hidden="true">
-                      {feeTokenSymbol[0]}
-                    </span>
-                    <strong>{sendApproval.approval.estimatedFee}</strong>
-                    <span className="confirm-token">{feeTokenSymbol}</span>
+                  <div className="confirm-detail">
+                    <span>Recipient</span>
+                    <strong className="mono">{sendApproval.approval.details.recipient}</strong>
                   </div>
-                </div>
-              </>
-            )
-          })()}
-          {sendApproval.approval.details.memo && (
-            <div className="confirm-detail">
-              <span>Memo</span>
-              <strong>{sendApproval.approval.details.memo}</strong>
-            </div>
-          )}
-          <div className="actions">
-            <button onClick={() => handleConfirmSend(true)}>Confirm</button>
-            <button className="ghost" onClick={() => handleConfirmSend(false)}>
-              Cancel
-            </button>
+                  <div className="confirm-detail">
+                    <span>Estimated fee</span>
+                    <div className="confirm-inline">
+                      <span className={feeIconClass} aria-hidden="true">
+                        {feeTokenSymbol[0]}
+                      </span>
+                      <strong>{sendApproval.approval.estimatedFee}</strong>
+                      <span className="confirm-token">{feeTokenSymbol}</span>
+                    </div>
+                  </div>
+                </>
+              )
+            })()}
+            {sendApproval.approval.details.memo && (
+              <div className="confirm-detail">
+                <span>Memo</span>
+                <strong>{sendApproval.approval.details.memo}</strong>
+              </div>
+            )}
           </div>
-        </section>
+
+          <button className="button-large button-large--primary" onClick={() => handleConfirmSend(true)}>
+            Confirm & Send
+          </button>
+        </div>
       )}
 
       {screen === 'settings' && state && (
@@ -902,28 +1247,6 @@ export function PopupApp() {
         </section>
       )}
 
-      {state?.hasVault && !state.locked && screen !== 'approval' && (
-        <nav className="bottom-nav">
-          <button
-            className={screen === 'home' ? 'active' : ''}
-            onClick={() => setScreen('home')}
-          >
-            Home
-          </button>
-          <button
-            className={screen === 'send' ? 'active' : ''}
-            onClick={() => setScreen('send')}
-          >
-            Send
-          </button>
-          <button
-            className={screen === 'settings' ? 'active' : ''}
-            onClick={() => setScreen('settings')}
-          >
-            Settings
-          </button>
-        </nav>
-      )}
     </div>
   )
 }

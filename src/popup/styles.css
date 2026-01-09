@@ -884,14 +884,14 @@ label {
 }
 
 .unlock-logo {
-  width: 120px;
+  width: 180px;
   height: auto;
   margin-bottom: 8px;
   object-fit: contain;
 }
 
 .unlock-title {
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 500;
   margin: 0;
   color: var(--ink);

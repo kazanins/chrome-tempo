@@ -17,7 +17,7 @@
     "service_worker": "service_worker.js",
     "type": "module"
   },
-  "permissions": ["storage"],
+  "permissions": ["storage", "clipboardRead"],
   "host_permissions": ["<all_urls>"],
   "content_scripts": [
     {

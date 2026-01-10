@@ -287,12 +287,15 @@ select.select-field {
   border-color: var(--ink);
 }
 
+.account-separator {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+
 .account-option--action {
   font-weight: 600;
   color: var(--accent);
-  border-top: 1px solid var(--border);
-  margin-top: 2px;
-  padding-top: 10px;
 }
 
 input:focus,
@@ -342,6 +345,7 @@ button.ghost {
   background: #f4f4f4;
   border: 1px solid var(--border);
   font-size: 12px;
+  margin-bottom: 12px;
 }
 
 .banner__content {
@@ -411,9 +415,17 @@ button.ghost {
   border-radius: 14px;
   padding: 12px;
   display: flex;
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+}
+
+.balance-hero__content {
+  display: flex;
   flex-direction: column;
   gap: 4px;
-  border: 1px solid var(--border);
 }
 
 .balance-hero span {
@@ -432,6 +444,31 @@ button.ghost {
 .balance-hero small {
   font-size: 11px;
   color: var(--muted);
+}
+
+.add-token-button {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+  padding: 0;
+}
+
+.add-token-button:hover {
+  background: var(--surface);
+  transform: scale(1.1);
+}
+
+.add-token-button svg {
+  color: var(--ink);
+  stroke: var(--ink);
 }
 
 .token-list {
@@ -456,6 +493,7 @@ button.ghost {
 .token-row strong {
   display: block;
   font-size: 13px;
+  font-weight: 200;
 }
 
 .token-meta {
@@ -499,6 +537,41 @@ button.ghost {
   line-height: 1;
 }
 
+/* Custom token styles */
+.token-delete-button {
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-left: 6px;
+  flex-shrink: 0;
+}
+
+.token-delete-button svg {
+  stroke: var(--muted);
+}
+
+.token-delete-button:hover {
+  background: #fef2f2;
+}
+
+.token-delete-button:hover svg {
+  stroke: #dc2626;
+}
+
+.token-icon--custom {
+  background: #6366f1;
+}
+
 .label {
   font-size: 12px;
   color: var(--muted);
@@ -529,11 +602,20 @@ button.ghost {
   gap: 4px;
   padding: 8px 0;
   border-bottom: 1px solid var(--border);
-  font-size: 12px;
+  font-size: 14px;
 }
 
 .confirm-detail:last-child {
   border-bottom: none;
+}
+
+.confirm-detail strong {
+  font-weight: 400;
+}
+
+.confirm-detail .mono {
+  font-size: 12px;
+  font-weight: 400;
 }
 
 .confirm-inline {
@@ -545,6 +627,31 @@ button.ghost {
 .confirm-token {
   font-size: 12px;
   color: var(--muted);
+  font-weight: 200;
+}
+
+.confirm-value {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  font-size: 13px;
+  background: var(--surface);
+  color: var(--ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.confirm-value strong {
+  font-weight: 500;
+}
+
+.confirm-value.mono {
+  font-family: "SFMono-Regular", "Menlo", "Monaco", "Courier New", monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .error-log {
@@ -872,6 +979,32 @@ label {
   font-weight: 400;
 }
 
+.connection-button {
+  background: transparent;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  color: var(--ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  font-family: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.connection-button:hover {
+  background: var(--surface);
+}
+
+.connection-button strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+
 /* Unlock Screen */
 .unlock-screen {
   display: flex;
@@ -1008,8 +1141,8 @@ label {
 
 .amount-input {
   flex: 1;
-  max-width: 160px;
-  min-width: 100px;
+  max-width: none;
+  min-width: 120px;
 }
 
 .token-select-wrapper {
@@ -1018,8 +1151,8 @@ label {
 }
 
 .token-select-trigger {
-  min-width: 90px;
-  width: 90px;
+  min-width: 110px;
+  width: 110px;
   padding: 8px 28px 8px 12px;
   border-radius: 10px;
   border: 1px solid var(--border);

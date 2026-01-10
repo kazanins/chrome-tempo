@@ -27,6 +27,7 @@ type Screen =
   | 'send_confirm'
   | 'settings'
   | 'add'
+  | 'add_custom_token'
 
 export function PopupApp() {
   const normalizeAddress = (value?: string) => (value ? value.toLowerCase() : '')
@@ -73,6 +74,13 @@ export function PopupApp() {
   const [copied, setCopied] = React.useState<boolean>(false)
   const [privateKeyCopied, setPrivateKeyCopied] = React.useState<boolean>(false)
   const [importReturnScreen, setImportReturnScreen] = React.useState<Screen>('welcome')
+  const [customTokenForm, setCustomTokenForm] = React.useState({
+    address: '',
+    symbol: ''
+  })
+  const [customTokenValidation, setCustomTokenValidation] = React.useState({
+    address: { status: 'idle' as 'idle' | 'valid' | 'invalid', message: '' }
+  })
 
   React.useEffect(() => {
     refreshState()
@@ -158,6 +166,25 @@ export function PopupApp() {
       }))
     }
   }, [sendForm.amount, sendForm.token, state?.tokenBalances])
+
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      if (customTokenForm.address) {
+        const result = validateTokenAddress(customTokenForm.address)
+        setCustomTokenValidation({
+          address: {
+            status: result.valid ? 'valid' : 'invalid',
+            message: result.message
+          }
+        })
+      } else {
+        setCustomTokenValidation({
+          address: { status: 'idle', message: '' }
+        })
+      }
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [customTokenForm.address])
 
   function showStatus(message: string, timeoutMs = 2000, txHash?: string) {
     setStatus({ message, txHash })
@@ -336,6 +363,61 @@ export function PopupApp() {
     await refreshState()
   }
 
+  async function handleDisconnectDapp(origin: string) {
+    setError('')
+    try {
+      await sendUiRequest('DISCONNECT_DAPP', { origin })
+      showStatus('Disconnected from dApp')
+      await refreshState()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to disconnect'
+      setError(message)
+      setErrorLog((prev) => [`${new Date().toISOString()} ${message}`, ...prev].slice(0, 10))
+    }
+  }
+
+  async function handleAddCustomToken() {
+    setError('')
+
+    if (!customTokenForm.address || !customTokenForm.symbol) {
+      setError('Please fill in all fields')
+      return
+    }
+
+    if (customTokenValidation.address.status !== 'valid') {
+      setError('Please enter a valid token address')
+      return
+    }
+
+    try {
+      await sendUiRequest('ADD_CUSTOM_TOKEN', {
+        address: customTokenForm.address,
+        symbol: customTokenForm.symbol
+      })
+      setCustomTokenForm({ address: '', symbol: '' })
+      showStatus('Token added successfully')
+      setScreen('home')
+      await refreshState()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to add custom token'
+      setError(message)
+      setErrorLog((prev) => [`${new Date().toISOString()} ${message}`, ...prev].slice(0, 10))
+    }
+  }
+
+  async function handleRemoveCustomToken(address: string) {
+    setError('')
+    try {
+      await sendUiRequest('REMOVE_CUSTOM_TOKEN', { address })
+      showStatus('Token removed')
+      await refreshState()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to remove token'
+      setError(message)
+      setErrorLog((prev) => [`${new Date().toISOString()} ${message}`, ...prev].slice(0, 10))
+    }
+  }
+
   function truncateAddress(address?: string) {
     if (!address) return ''
     return `${address.slice(0, 6)}…${address.slice(-4)}`
@@ -401,8 +483,33 @@ export function PopupApp() {
     return `${parts[0]}.${parts[1].slice(0, decimals)}`
   }
 
+  function validateTokenAddress(address: string): { valid: boolean; message: string } {
+    if (!address.trim()) {
+      return { valid: false, message: '' }
+    }
+
+    // Check if it starts with 0x
+    if (!address.startsWith('0x')) {
+      return { valid: false, message: 'Address must start with 0x' }
+    }
+
+    // Check if it has exactly 42 characters (0x + 40 hex chars)
+    if (address.length !== 42) {
+      return { valid: false, message: 'Address must be 42 characters (0x + 40 hex digits)' }
+    }
+
+    // Check if all characters after 0x are valid hex
+    const hexPart = address.slice(2)
+    if (!/^[0-9a-fA-F]{40}$/.test(hexPart)) {
+      return { valid: false, message: 'Address must contain only hex characters (0-9, a-f)' }
+    }
+
+    return { valid: true, message: 'Valid address' }
+  }
+
   function getTokenByAddress(address: string) {
-    return TEMPO_TOKENS.find(
+    const allTokens = [...TEMPO_TOKENS, ...(state?.customTokens ?? [])]
+    return allTokens.find(
       (t) => normalizeAddress(t.address) === normalizeAddress(address)
     )
   }
@@ -442,27 +549,34 @@ export function PopupApp() {
   }
 
   async function handlePasteRecipient() {
-    const input = document.querySelector('input[placeholder="0x..."]') as HTMLInputElement
-    if (!input) return
-
     try {
       // Try modern clipboard API first
       if (navigator.clipboard?.readText) {
         const text = await navigator.clipboard.readText()
-        if (isAddress(text)) {
-          setSendForm({ ...sendForm, recipient: text })
+        const trimmedText = text.trim()
+        if (trimmedText && isAddress(trimmedText)) {
+          setSendForm({ ...sendForm, recipient: trimmedText })
+        } else if (!trimmedText) {
+          setError('Clipboard is empty')
         } else {
           setError('Clipboard does not contain a valid address')
         }
       } else {
-        // Fallback: focus input and trigger paste
-        input.focus()
-        document.execCommand('paste')
+        // Fallback: focus input so user can paste manually
+        const input = document.querySelector('input[placeholder="0x..."]') as HTMLInputElement
+        if (input) {
+          input.focus()
+          input.select()
+        }
       }
     } catch (err) {
-      // If clipboard API fails, just focus the input so user can paste manually
-      input.focus()
-      input.select()
+      // If clipboard API fails, focus the input so user can paste manually
+      const input = document.querySelector('input[placeholder="0x..."]') as HTMLInputElement
+      if (input) {
+        input.focus()
+        input.select()
+      }
+      setError('Unable to access clipboard. Please paste manually.')
     }
   }
 
@@ -586,6 +700,7 @@ export function PopupApp() {
                       {formatAccountLabel(address, accounts)}
                     </button>
                   ))}
+                  <div className="account-separator"></div>
                   <button
                     type="button"
                     className="account-option account-option--action"
@@ -788,7 +903,7 @@ export function PopupApp() {
       )}
 
       {screen === 'approval' && pendingApproval && (
-        <section className="card">
+        <section className="card approval-card">
           <h2>Approve</h2>
           <p className="muted">{pendingApproval.summary}</p>
           {pendingApproval.estimatedFee &&
@@ -871,18 +986,58 @@ export function PopupApp() {
         <>
           <section className="card">
             <div className="balance-hero">
-              <span>Total Balance</span>
-              <strong>{formatAmount(state.totalBalance)}</strong>
-              <small>USD Stablecoins</small>
+              <div className="balance-hero__content">
+                <span>Total Balance</span>
+                <strong>{formatAmount(state.totalBalance)}</strong>
+                <small>USD Stablecoins</small>
+              </div>
+              <button
+                type="button"
+                className="add-token-button"
+                onClick={() => setScreen('add_custom_token')}
+                title="Add custom token"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                  <line x1="12" y1="8" x2="12" y2="16"></line>
+                  <line x1="8" y1="12" x2="16" y2="12"></line>
+                </svg>
+              </button>
             </div>
             <div className="token-list">
-              {TEMPO_TOKENS.map((token) => (
+              {TEMPO_TOKENS.filter((token) => token.symbol !== 'ThetaUSD').map((token) => (
                 <div key={token.address} className="token-row">
                   <div className="token-meta">
                     <span className={`token-icon token-icon--${token.symbol.toLowerCase()}`} aria-hidden="true">
                       {token.symbol[0]}
                     </span>
                     <strong>{token.symbol}</strong>
+                  </div>
+                  <div className="token-amount">
+                    {formatAmount(state.tokenBalances?.[token.symbol])}
+                  </div>
+                </div>
+              ))}
+
+              {(state.customTokens ?? []).map((token) => (
+                <div key={token.address} className="token-row token-row--custom">
+                  <div className="token-meta">
+                    <span className="token-icon token-icon--custom" aria-hidden="true">
+                      {token.symbol[0]}
+                    </span>
+                    <strong>{token.symbol}</strong>
+                    <button
+                      type="button"
+                      className="token-delete-button"
+                      onClick={() => handleRemoveCustomToken(token.address)}
+                      title="Remove token"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="9" y1="9" x2="15" y2="15"></line>
+                        <line x1="15" y1="9" x2="9" y2="15"></line>
+                      </svg>
+                    </button>
                   </div>
                   <div className="token-amount">
                     {formatAmount(state.tokenBalances?.[token.symbol])}
@@ -899,13 +1054,18 @@ export function PopupApp() {
           </button>
           <div className="connection-status">
             {Object.keys(state.connections).length > 0 ? (
-              <>
+              <button
+                type="button"
+                className="connection-button"
+                onClick={() => handleDisconnectDapp(Object.keys(state.connections)[0])}
+                title="Click to disconnect"
+              >
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="connection-icon">
                   <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                   <circle cx="12" cy="12" r="3"></circle>
                 </svg>
                 <strong>{Object.keys(state.connections)[0]}</strong>
-              </>
+              </button>
             ) : (
               <>
                 <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="connection-icon">
@@ -969,12 +1129,12 @@ export function PopupApp() {
                     aria-expanded={tokenDropdownOpen}
                   >
                     {sendForm.token
-                      ? TEMPO_TOKENS.find((t) => t.address === sendForm.token)?.symbol || 'Token'
+                      ? getTokenByAddress(sendForm.token)?.symbol || 'Token'
                       : 'Token'}
                   </button>
                   {tokenDropdownOpen && (
                     <div className="token-select-dropdown">
-                      {TEMPO_TOKENS.map((token) => (
+                      {[...TEMPO_TOKENS, ...(state?.customTokens ?? [])].map((token) => (
                         <button
                           key={token.address}
                           type="button"
@@ -994,15 +1154,6 @@ export function PopupApp() {
                     </div>
                   )}
                 </div>
-                <button
-                  type="button"
-                  className="helper-button helper-button--max"
-                  onClick={handleMaxAmount}
-                  disabled={!sendForm.token}
-                  title="Use maximum available balance"
-                >
-                  MAX
-                </button>
               </div>
               {sendForm.token &&
                 (() => {
@@ -1155,58 +1306,76 @@ export function PopupApp() {
                 <strong>Warning:</strong> Insufficient fee token balance. Transaction may fail.
               </div>
             )}
-          <div className="confirm-card">
-            {(() => {
-              const tokenInfo = TEMPO_TOKENS.find(
-                (token) =>
-                  normalizeAddress(token.address) ===
-                  normalizeAddress(sendApproval.approval.details.token)
-              )
-              const symbol = tokenInfo?.symbol ?? 'TIP-20'
-              const iconClass = `token-icon token-icon--${symbol.toLowerCase()}`
-              const formattedAmount = `${sendApproval.approval.details.amount} ${symbol}`
-              const feeTokenInfo = TEMPO_TOKENS.find(
-                (token) =>
-                  normalizeAddress(token.address) ===
-                  normalizeAddress(sendApproval.approval.feeToken)
-              )
-              const feeTokenSymbol = feeTokenInfo?.symbol ?? sendApproval.approval.feeToken
-              const feeIconClass = `token-icon token-icon--${feeTokenSymbol.toLowerCase()}`
-              return (
-                <>
-                  <div className="confirm-detail">
-                    <span>Amount</span>
-                    <div className="confirm-inline">
+
+          {(() => {
+            const allTokens = [...TEMPO_TOKENS, ...(state?.customTokens ?? [])]
+            const tokenInfo = allTokens.find(
+              (token) =>
+                normalizeAddress(token.address) ===
+                normalizeAddress(sendApproval.approval.details.token)
+            )
+            const symbol = tokenInfo?.symbol ?? 'TIP-20'
+            const isCustomToken = state?.customTokens?.some(
+              (token) => normalizeAddress(token.address) === normalizeAddress(sendApproval.approval.details.token)
+            )
+            const iconClass = isCustomToken ? 'token-icon token-icon--custom' : `token-icon token-icon--${symbol.toLowerCase()}`
+            const amount = sendApproval.approval.details.amount
+            const feeTokenInfo = allTokens.find(
+              (token) =>
+                normalizeAddress(token.address) ===
+                normalizeAddress(sendApproval.approval.feeToken)
+            )
+            const feeTokenSymbol = feeTokenInfo?.symbol ?? sendApproval.approval.feeToken
+            const isFeeTokenCustom = state?.customTokens?.some(
+              (token) => normalizeAddress(token.address) === normalizeAddress(sendApproval.approval.feeToken)
+            )
+            const feeIconClass = isFeeTokenCustom ? 'token-icon token-icon--custom' : `token-icon token-icon--${feeTokenSymbol.toLowerCase()}`
+            return (
+              <>
+                <div className="form-section">
+                  <label>
+                    Amount
+                    <div className="confirm-value">
                       <span className={iconClass} aria-hidden="true">
                         {symbol[0]}
                       </span>
-                      <strong>{formattedAmount}</strong>
+                      <strong>{amount}</strong>
+                      <span className="confirm-token">{symbol}</span>
                     </div>
-                  </div>
-                  <div className="confirm-detail">
-                    <span>Recipient</span>
-                    <strong className="mono">{sendApproval.approval.details.recipient}</strong>
-                  </div>
-                  <div className="confirm-detail">
-                    <span>Estimated fee</span>
-                    <div className="confirm-inline">
+                  </label>
+                </div>
+
+                <div className="form-section">
+                  <label>
+                    Estimated fee
+                    <div className="confirm-value">
                       <span className={feeIconClass} aria-hidden="true">
                         {feeTokenSymbol[0]}
                       </span>
                       <strong>{sendApproval.approval.estimatedFee}</strong>
                       <span className="confirm-token">{feeTokenSymbol}</span>
                     </div>
+                  </label>
+                </div>
+
+                <div className="form-section">
+                  <label>
+                    Recipient
+                    <div className="confirm-value mono">{sendApproval.approval.details.recipient}</div>
+                  </label>
+                </div>
+
+                {sendApproval.approval.details.memo && (
+                  <div className="form-section">
+                    <label>
+                      Memo
+                      <div className="confirm-value">{sendApproval.approval.details.memo}</div>
+                    </label>
                   </div>
-                </>
-              )
-            })()}
-            {sendApproval.approval.details.memo && (
-              <div className="confirm-detail">
-                <span>Memo</span>
-                <strong>{sendApproval.approval.details.memo}</strong>
-              </div>
-            )}
-          </div>
+                )}
+              </>
+            )
+          })()}
 
           <button className="button-large button-large--primary" onClick={() => handleConfirmSend(true)}>
             Confirm & Send
@@ -1242,7 +1411,7 @@ export function PopupApp() {
             <label>
               Default fee token
               <select value={feeToken} onChange={(event) => setFeeToken(event.target.value)}>
-                {TEMPO_TOKENS.map((token) => (
+                {[...TEMPO_TOKENS, ...(state?.customTokens ?? [])].map((token) => (
                   <option key={token.address} value={normalizeAddress(token.address)}>
                     {token.symbol}
                   </option>
@@ -1274,6 +1443,84 @@ export function PopupApp() {
 
           <button className="button-large button-large--primary" onClick={handleSettingsSave}>
             Save Settings
+          </button>
+        </div>
+      )}
+
+      {screen === 'add_custom_token' && (
+        <div className="send-flow">
+          <div className="send-flow__header">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Back to home"
+              onClick={() => {
+                setScreen('home')
+                setCustomTokenForm({ address: '', symbol: '' })
+                setCustomTokenValidation({ address: { status: 'idle', message: '' } })
+              }}
+            >
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M19 12H5M12 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <h2>Add Custom Token</h2>
+            <div style={{ width: '30px' }}></div>
+          </div>
+
+          <div className="form-section">
+            <label>
+              Token Address
+              {customTokenValidation.address.message && (
+                <span
+                  className={`validation-message validation-message--${customTokenValidation.address.status}`}
+                >
+                  {customTokenValidation.address.status === 'valid' ? '✓' : '✗'}{' '}
+                  {customTokenValidation.address.message}
+                </span>
+              )}
+              <div className="input-with-validation">
+                <input
+                  value={customTokenForm.address}
+                  onChange={(event) =>
+                    setCustomTokenForm({ ...customTokenForm, address: event.target.value })
+                  }
+                  placeholder="0x..."
+                />
+                {customTokenValidation.address.status === 'valid' && (
+                  <span className="validation-icon validation-icon--valid">✓</span>
+                )}
+                {customTokenValidation.address.status === 'invalid' && (
+                  <span className="validation-icon validation-icon--invalid">✗</span>
+                )}
+              </div>
+            </label>
+          </div>
+
+          <div className="form-section">
+            <label>
+              Token Symbol
+              <input
+                value={customTokenForm.symbol}
+                onChange={(event) =>
+                  setCustomTokenForm({ ...customTokenForm, symbol: event.target.value.toUpperCase() })
+                }
+                placeholder="e.g., USDC"
+                maxLength={10}
+              />
+            </label>
+          </div>
+
+          <button
+            className="button-large button-large--primary"
+            onClick={handleAddCustomToken}
+            disabled={
+              !customTokenForm.address ||
+              !customTokenForm.symbol ||
+              customTokenValidation.address.status !== 'valid'
+            }
+          >
+            Add Token
           </button>
         </div>
       )}

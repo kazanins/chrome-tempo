@@ -33,6 +33,7 @@ import type {
   BackgroundRequest,
   BackgroundResponse,
   ConnectionMap,
+  CustomToken,
   PopupState,
   ProviderRequest,
   ProviderResponse,
@@ -49,7 +50,8 @@ const STORAGE_KEYS = {
   connections: 'connections',
   autoLockMinutes: 'autoLockMinutes',
   selectedAccountIndex: 'selectedAccountIndex',
-  lastActivity: 'lastActivity'
+  lastActivity: 'lastActivity',
+  customTokens: 'customTokens'
 } as const
 
 const DEFAULT_AUTO_LOCK_MINUTES = 5
@@ -338,6 +340,14 @@ async function getFeeToken(): Promise<string> {
 
 async function setFeeToken(feeToken: string): Promise<void> {
   await storageSet({ [STORAGE_KEYS.feeToken]: feeToken })
+}
+
+async function getCustomTokens(): Promise<CustomToken[]> {
+  return (await storageGet<CustomToken[]>(STORAGE_KEYS.customTokens)) ?? []
+}
+
+async function saveCustomTokens(tokens: CustomToken[]): Promise<void> {
+  await storageSet({ [STORAGE_KEYS.customTokens]: tokens })
 }
 
 async function buildTempoTx(
@@ -849,6 +859,7 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         const connections = await getConnections()
         const autoLockMinutes = (await storageGet<number>(STORAGE_KEYS.autoLockMinutes)) ??
           DEFAULT_AUTO_LOCK_MINUTES
+        const customTokens = await getCustomTokens()
         const locked = !unlockedVault
         let selectedIndex = await getSelectedAccountIndex()
         let address: string | undefined
@@ -871,8 +882,10 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
             ])
             feeTokenBalance = formatUnits(parseHexToBigInt(balanceHex), TIP20_DECIMALS)
 
+            const allTokens = [...TEMPO_TOKENS, ...customTokens]
+
             const balances = await Promise.all(
-              TEMPO_TOKENS.map(async (token) => {
+              allTokens.map(async (token) => {
                 const tokenBalanceHex = await rpcRequest<string>('eth_call', [
                   { to: token.address, data },
                   'latest'
@@ -903,7 +916,8 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
           totalBalance,
           connections,
           autoLockMinutes,
-          rpcUrl: TEMPO_RPC_URL
+          rpcUrl: TEMPO_RPC_URL,
+          customTokens
         }
         return { ok: true, result: state }
       }
@@ -1015,6 +1029,7 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         return { ok: true }
       }
       case 'SET_ACTIVE_ACCOUNT': {
+        await touchActivity()
         const vault = await ensureUnlocked()
         const { address } = action.payload as { address: string }
         const index = vault.accounts.findIndex(
@@ -1024,7 +1039,6 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         await setSelectedAccountIndex(index)
         cachedAddress = vault.accounts[index].address
         cachedAccountIndex = index
-        await touchActivity()
         return { ok: true, result: { address: cachedAddress } }
       }
       case 'ADD_WALLET': {
@@ -1098,6 +1112,61 @@ async function handleUiRequest(action: BackgroundRequest & { type: 'UI_REQUEST' 
         if (!rawTx) throw invalidParams('Missing raw transaction')
         const txHash = await rpcRequest<string>('eth_sendRawTransaction', [rawTx])
         return { ok: true, result: { txHash } }
+      }
+      case 'GET_CUSTOM_TOKENS': {
+        const tokens = await getCustomTokens()
+        return { ok: true, result: tokens }
+      }
+      case 'ADD_CUSTOM_TOKEN': {
+        const { symbol, address } = action.payload as { symbol: string; address: string }
+        if (!symbol || !address) throw invalidParams('Missing symbol or address')
+
+        // Validate address format
+        if (!/^0x[0-9a-fA-F]{40}$/.test(address)) {
+          throw invalidParams('Invalid address format')
+        }
+
+        // Check for duplicates (case-insensitive)
+        const existing = await getCustomTokens()
+        const normalizedAddress = address.toLowerCase()
+
+        // Check against custom tokens
+        if (existing.some(t => t.address.toLowerCase() === normalizedAddress)) {
+          throw invalidParams('Token already exists')
+        }
+
+        // Check against built-in tokens
+        if (TEMPO_TOKENS.some(t => t.address.toLowerCase() === normalizedAddress)) {
+          throw invalidParams('Token already exists as a built-in token')
+        }
+
+        // Add token
+        const customTokens = [...existing, { symbol, address: normalizedAddress }]
+        await saveCustomTokens(customTokens)
+        await touchActivity()
+        return { ok: true, result: { symbol, address: normalizedAddress } }
+      }
+      case 'REMOVE_CUSTOM_TOKEN': {
+        const { address } = action.payload as { address: string }
+        if (!address) throw invalidParams('Missing address')
+
+        const existing = await getCustomTokens()
+        const filtered = existing.filter(t => t.address.toLowerCase() !== address.toLowerCase())
+        await saveCustomTokens(filtered)
+        await touchActivity()
+        return { ok: true, result: true }
+      }
+      case 'DISCONNECT_DAPP': {
+        const { origin } = action.payload as { origin: string }
+        if (!origin) throw invalidParams('Missing origin')
+
+        const connections = await getConnections()
+        if (connections[origin]) {
+          delete connections[origin]
+          await storageSet({ [STORAGE_KEYS.connections]: connections })
+        }
+        await touchActivity()
+        return { ok: true, result: true }
       }
       default:
         return { ok: false, error: { code: EIP1193_ERROR_CODES.unsupported, message: 'Unknown action' } }

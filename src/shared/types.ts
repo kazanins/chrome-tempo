@@ -39,6 +39,10 @@ export type UIAction =
   | 'SET_FEE_TOKEN'
   | 'SEND_TIP20_PREPARE'
   | 'SEND_TIP20_EXECUTE'
+  | 'GET_CUSTOM_TOKENS'
+  | 'ADD_CUSTOM_TOKEN'
+  | 'REMOVE_CUSTOM_TOKEN'
+  | 'DISCONNECT_DAPP'
 
 export type ApprovalKind =
   | 'connect'
@@ -76,6 +80,11 @@ export type VaultRecord = {
   version: 1
 }
 
+export type CustomToken = {
+  symbol: string
+  address: string
+}
+
 export type ConnectionMap = Record<
   string,
   {
@@ -97,4 +106,5 @@ export type PopupState = {
   connections: ConnectionMap
   autoLockMinutes: number
   rpcUrl: string
+  customTokens?: CustomToken[]
 }
